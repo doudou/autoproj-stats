@@ -30,15 +30,19 @@ module Autoproj
             end
 
             def process_file(pkg, path, sloc: proc { true })
-                blamed = pkg.importer.run_git(pkg, 'blame', 'HEAD', '--', path, encoding: 'UTF-8')
+                blamed = pkg.importer.run_git(pkg, 'blame', '-w', '-C', '-M', '--minimal', 'HEAD', '--', path, encoding: 'UTF-8')
 
                 authors = Hash.new(0)
                 copyrights = Hash.new(0)
 
                 line_matcher = Regexp.new(/^\^?[0-9a-f]+.*\((.*) (\d{4})-(\d{2})-(\d{2}).*\d+\) (.*)$/)
                 blamed.each do |line|
+                    line = line.encode('UTF-8', invalid: :replace, undef: :replace)
                     if m = line_matcher.match(line)
                         _, name, y, m, d, code = *m
+                        code = code.strip
+                        next if code.empty? || !sloc.(code)
+
                         name = sanitizer.sanitize_author_name(name.strip)
                         copyright = sanitizer.compute_copyright_of(
                             name, Date.new(y.to_i, m.to_i, d.to_i))

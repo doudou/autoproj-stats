@@ -10,13 +10,27 @@ module Autoproj
                 @sanitizer = sanitizer
             end
 
-            def process(packages)
-                packages.inject(Hash.new) do |h, pkg|
-                    if stats = compute_package_stats(pkg)
+            def process(packages, parallel: 1)
+                executor = Concurrent::FixedThreadPool.new(parallel, max_length: 0)
+                result = Hash.new
+
+                futures = packages.map do |pkg|
+                    [pkg, Concurrent::Future.execute(executor: executor) { compute_package_stats(pkg) }]
+                end
+                futures.inject(Hash.new) do |h, (pkg, future)|
+                    if stats = future.value
                         h[pkg] = stats
+                    elsif future.reason.kind_of?(Exception)
+                        raise future.reason
+                    else
+                        pkg.error "%s: failed, #{future.reason}"
                     end
                     h
                 end
+
+            ensure
+                executor.shutdown
+                executor.wait_for_termination
             end
 
             def compute_package_stats(pkg)
