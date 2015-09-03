@@ -33,24 +33,24 @@ module Autoproj
                 stats.each do |pkg, pkg_stats|
                     next if excluded.include?(pkg.name)
                     row_count = [1, pkg_stats.authors.size, pkg_stats.copyright.size].max
+
+                    # Compute per-package info
+                    sloc = pkg_stats.sloc
+                    author_info    = line_count_summary(pkg_stats.authors, sloc)
+                    copyright_info = line_count_summary(pkg_stats.copyright, sloc)
+                    license = sanitizer.license_of(pkg)
+
+                    # Compute aggregated info
+                    total_sloc += sloc
                     overall_per_author.merge!(pkg_stats.authors) { |_, v1, v2| v1 + v2 }
                     overall_per_copyright.merge!(pkg_stats.copyright) { |_, v1, v2| v1 + v2 }
-
-                    sloc = pkg_stats.sloc
-                    total_sloc += sloc
-                    authors = pkg_stats.authors.sort_by { |_, count| count }.reverse
-                    author_names  = authors.map(&:first)
-                    author_counts = count_to_ratios(authors.map(&:last), sloc)
-                    copyrights = pkg_stats.copyright.sort_by { |_, count| count }.reverse
-                    copyright_names  = copyrights.map(&:first)
-                    copyright_counts = count_to_ratios(copyrights.map(&:last), sloc)
-                    license = sanitizer.license_of(pkg)
                     copyrights_for_this_license =
                         (overall_copyright_per_license[license || "Unknown"] ||= Hash.new)
                     copyrights_for_this_license.merge!(pkg_stats.copyright) { |_, v1, v2| v1 + v2 }
-                    Array.new(row_count).zip([pkg.name], [sloc], [license], author_names, author_counts, copyright_names, copyright_counts) do |line|
-                            per_package_table << line[1..-1].map { |v| v || '' }
-                        end
+
+                    Array.new(row_count).zip([pkg.name], [sloc], [license], *author_info, *copyright_info) do |line|
+                        per_package_table << line[1..-1].map { |v| v || '' }
+                    end
                 end
 
                 no_license = stats.find_all do |pkg, pkg_stats|
@@ -61,16 +61,14 @@ module Autoproj
                 overall_copyright_per_license.sort_by(&:first).each do |license_name, copyrights|
                     first_col = Array.new(copyrights.size)
                     first_col[0] = license_name
-                    copyrights = copyrights.sort_by { |_, count| count }.reverse
-                    copyright_names  = copyrights.map(&:first)
-                    copyright_counts = count_to_ratios(copyrights.map(&:last), total_sloc)
-                    first_col.zip(copyright_names, copyright_counts) do |line|
+                    copyright_info = line_count_summary(copyrights, total_sloc)
+                    first_col.zip(*copyright_info) do |line|
                         copyright_per_license_table << line.map { |v| v || "" }
                     end
                 end
 
-                no_stats = (source_packages.to_set - stats.keys.map(&:name).to_set)
-                puts "could not compute stats for #{no_stats.size} packages: #{no_stats.sort.join(", ")}"
+                no_stats = (source_packages.to_set - stats.keys.to_set)
+                puts "could not compute stats for #{no_stats.size} packages: #{no_stats.map(&:name).sort.join(", ")}"
                 puts "#{no_license.size} packages without known license: #{no_license.map { |pkg, _| pkg.name }.sort.join(", ")}"
                 puts "#{stats.size} Packages"
                 puts "#{total_sloc} SLOC counted"
@@ -84,24 +82,16 @@ module Autoproj
                          end
 
                     io.puts "== Overall stats per author (sorted by contribution)"
-                    overall_per_author = overall_per_author.sort_by { |name, _| name }
-                    author_names  = overall_per_author.map(&:first)
-                    author_counts = overall_per_author.map(&:last)
-                    author_ratios = count_to_ratios(author_counts, total_sloc)
-                    io.puts TTY::Table.new(author_names.zip(author_ratios, author_counts)).render(:ascii)
+                    author_names, *author_info = line_count_summary(overall_per_author, total_sloc)
+                    io.puts TTY::Table.new(author_names.zip(*author_info)).render(:ascii)
                     io.puts
                     io.puts "== Overall stats per author (sorted alphabetically)"
-                    overall_per_author = overall_per_author.sort_by { |name, _| name }
-                    author_names  = overall_per_author.map(&:first)
-                    author_counts = overall_per_author.map(&:last)
-                    author_ratios = count_to_ratios(author_counts, total_sloc)
-                    io.puts TTY::Table.new(author_names.zip(author_ratios, author_counts)).render(:ascii)
+                    author_names, *author_info = line_count_summary(overall_per_author, total_sloc, &:first)
+                    io.puts TTY::Table.new(author_names.zip(*author_info)).render(:ascii)
                     io.puts
                     io.puts "== Overall stats per copyright"
-                    overall_per_copyright = overall_per_copyright.sort_by { |_, count| count }.reverse
-                    copyright_names  = overall_per_copyright.map(&:first)
-                    copyright_counts = count_to_ratios(overall_per_copyright.map(&:last), total_sloc)
-                    io.puts TTY::Table.new(copyright_names.zip(copyright_counts)).render(:ascii)
+                    copyright_names, *copyright_info = line_count_summary(overall_per_copyright, total_sloc)
+                    io.puts TTY::Table.new(copyright_names.zip(*copyright_info)).render(:ascii)
                     io.puts
                     io.puts "== Breakdown of copyright per license"
                     io.puts copyright_per_license_table.render(:ascii)
@@ -113,6 +103,20 @@ module Autoproj
                         io.close
                     end
                 end
+            end
+
+            def line_count_summary(count_per_category, sloc, reverse: true, &block)
+                ordered =
+                    if block_given?
+                        count_per_category.sort_by(&block)
+                    else
+                        count_per_category.sort_by { |_, count| count }
+                    end
+                ordered = ordered.reverse if reverse
+                names  = ordered.map(&:first)
+                counts = ordered.map(&:last)
+                ratios = count_to_ratios(counts, sloc)
+                return names, counts, ratios
             end
 
             def count_to_ratios(counts, total)
