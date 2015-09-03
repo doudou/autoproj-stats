@@ -30,7 +30,7 @@ module Autoproj
             end
 
             def process_file(pkg, path, sloc: proc { true })
-                blamed = pkg.importer.run_git(pkg, 'blame', '-w', '-C', '-M', '--minimal', 'HEAD', '--', path, encoding: 'UTF-8')
+                blamed = pkg.importer.run_git(pkg, 'blame', '-w', '-C', '-C', '-C', '-M', '--minimal', 'HEAD', '--', path, encoding: 'UTF-8')
 
                 authors = Hash.new(0)
                 copyrights = Hash.new(0)
